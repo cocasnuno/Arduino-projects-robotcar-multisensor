@@ -50,11 +50,10 @@ Projeto pessoal de robótica desenvolvido por **Nuno Ribeiro**, com foco em nave
 
 ## 📄 Licença
 
-Este projeto é distribuído sob a licença MIT. Podes usá-lo, modificá-lo e partilhá-lo livremente, desde que dês os devidos créditos.
+Este projeto é distribuído sob a licença MIT. 
 
 ---
 
-Se quiseres ver mais projetos ou pedir ajuda com robótica e programação, visita: [gptonline.ai](https://gptonline.ai/)
 */
 //robot multisensor com pelo menos 3 sensores ultrasonicos para seguir paredes (modo labirinto pela drt) ,
 //obstaculos e abismo (da escada ou da mesa abaixo)
