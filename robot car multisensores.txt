@@ -1,0 +1,823 @@
+﻿/*# 🤖 Robot Car Multisensor
+
+Projeto pessoal de robótica desenvolvido por **Nuno Ribeiro**, com foco em navegação autónoma, deteção de obstáculos, abismos, seguimento de linha, controlo remoto por IR e interação via LCD.
+
+> ⚙️ Em constante evolução — este projeto serve como base para testes e aprendizagem contínua no uso de múltiplos sensores em robôs móveis.
+
+## 🧩 Funcionalidades principais
+
+- 🚧 Deteção de obstáculos com 3 sensores ultrassónicos (frente, esquerda, direita)
+- 🕳️ Deteção de abismo (sensor ultrassónico voltado para baixo)
+- 🛑 Deteção de colisão
+- ➿ Modo labirinto (seguir paredes pela direita)
+- 📏 Velocidade adaptativa (inversamente proporcional à distância do obstáculo)
+- 🧭 Seguimento de linha (rotina em desenvolvimento)
+- 🎮 Controlo por comando IR (menu de modos e movimento manual)
+- 🖥️ Interface com LCD I2C (16x2 e 20x4)
+- 🌡️ Preparado para integração com sensor de temperatura DHT11
+
+## 🧠 Tecnologias e Bibliotecas
+
+- Arduino C++
+- `Servo.h`, `Ultrasonic.h`, `IRremote.h`
+- `LiquidCrystal_I2C.h`, `Wire.h`
+- `DHT.h` (comentado para futura integração)
+
+## 🛠️ Hardware usado
+
+- 1 placa Arduino (Uno, Mega ou compatível)
+- 2 motores DC + ponte H (L298N)
+- 3 sensores HC-SR04
+- 1 sensor de abismo (HC-SR04)
+- 1 sensor de colisão (mecânico ou com contacto)
+- 1 módulo IR receptor + comando
+- 1 ecrã LCD I2C (16x2 ou 20x4)
+- 2 servos (pitch e roll)
+- Opcional: sensor DHT11, Bluetooth, etc.
+
+## 🚧 Estado atual do projeto
+
+✅ Navegação básica e deteção de obstáculos  
+✅ Controlo por IR e LCD funcional  
+🕳️ Deteção de abismo integrada  
+🧭 Linha: rotina base implementada, a refinar  
+🚀 Pronto para expansão com novos sensores
+
+## 👨‍💻 Autor
+
+**Nuno Ribeiro**  
+📧 nunogmai@gmail.com
+
+## 📄 Licença
+
+Este projeto é distribuído sob a licença MIT. Podes usá-lo, modificá-lo e partilhá-lo livremente, desde que dês os devidos créditos.
+
+---
+
+Se quiseres ver mais projetos ou pedir ajuda com robótica e programação, visita: [gptonline.ai](https://gptonline.ai/)
+*/
+//robot multisensor com pelo menos 3 sensores ultrasonicos para seguir paredes (modo labirinto pela drt) ,
+//obstaculos e abismo (da escada ou da mesa abaixo)
+//sensores seguidor de linha, IR, lcd I2C(20x4) ou (16x2), colisao, temp e outros
+//velocidade inversamente proporcional `distancia
+//algumas rotinas ainda em estudo comentadas ou or implementar
+
+#include<Servo.h>
+#include "Ultrasonic.h"
+//#include <SoftwareSerial.h>bluethoot nao trabalha
+#include <IRremote.h> //v2.6.1
+#define IR_USE_TIMER1
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <DHT.h> //biblioteca do sensor DHT11 de temperatura e humidade
+
+//#define DHTPIN 2    // Pino de dados conectado ao DHT11(interrupt)
+//#define DHTTYPE DHT11   // Defina o tipo de sensor
+
+
+
+#define ENA 5
+#define MotorDrt1 6
+#define MotorDrt2 7
+#define MotorEsq1 8
+#define MotorEsq2 9
+#define ENB 3  
+
+
+// Definindo os pinos dos sensores de linha
+#define Se 22//esq
+#define Sc 24//meio
+#define Sd 26//drt
+//outros sensores
+#define Ir_pin A0
+#define colisaopin A1
+
+#define servopinroll 4
+#define servopinpitch 11
+
+#define Echof 13
+#define Trigf 12
+#define EchoAb 10
+#define TrigAb 2
+#define Echod A5
+#define Trigd A4
+#define Echoe A3
+#define Trige A2
+
+#define led_pin 53
+
+
+Ultrasonic ultrasonic(Trigf,Echof);
+Ultrasonic ultrasonicE(Trige,Echoe);
+Ultrasonic ultrasonicD(Trigd,Echod);
+Ultrasonic ultrasonicAb(TrigAb,EchoAb);
+
+Servo rollservo;
+Servo pitchservo;
+
+//DHT dht(DHTPIN, DHTTYPE);
+
+//int pir_pin = 21;
+//int led_pin = 3;
+//int led_pin2 = 4;
+//int buzzer_pin = 8;
+
+ LiquidCrystal_I2C lcd(0x27,16,2);
+ LiquidCrystal_I2C lcd2(0x27,20,4);
+
+int velocidade;
+//int v2=0;
+long distancia;
+long distanciaF; 
+long distanciAb;
+long distanciaEsq;
+long distanciaDir;
+long distanciaSvEsq;
+long distanciaSvDir;
+
+int sensoresq;;
+int sensorcent;;
+int sensordt;
+int cont=0;
+
+
+String message {""};
+String message1 {""};
+String message2 {""};
+String message3 {""};
+
+boolean modeobst=true;
+boolean modeabsm=false;
+boolean modelinha=false;
+boolean modelabirintoDt=true;
+boolean dirFrente = false;
+boolean dirTras = false;
+boolean dirDta = false;
+boolean dirEsq = false;
+boolean stop=false;
+boolean Mover=0;
+
+IRrecv irrecv(Ir_pin); 
+decode_results results; 
+
+
+void setup() 
+{
+  lcd.init();//inicializa lcd I2C
+  lcd2.init();//inicializa lcd I2C
+  Serial.begin(9600);
+  
+  ecranini();
+
+  rollservo.attach(servopinroll);
+  rollservo.write(95);
+
+  pitchservo.attach(servopinpitch);
+  pitchservo.write(90);//(70);
+
+  pinMode(ENA,OUTPUT);
+  pinMode(ENB,OUTPUT);
+  pinMode(MotorDrt1, OUTPUT);
+  pinMode(MotorDrt2, OUTPUT);
+  pinMode(MotorEsq1, OUTPUT);
+  pinMode(MotorEsq2, OUTPUT);
+  pinMode(Ir_pin, INPUT);
+  
+  // Configurando os pinos dos sensores como entrada
+  pinMode(Se, INPUT);
+  pinMode(Sc, INPUT);
+  pinMode(Sd, INPUT);
+
+  pinMode(Ir_pin, INPUT);
+  pinMode(colisaopin, INPUT);
+
+  pinMode(Echof, INPUT);
+  pinMode(Trigf, OUTPUT);
+  pinMode(Echoe, INPUT);
+  pinMode(Trige, OUTPUT);
+  pinMode(Echod, INPUT);
+  pinMode(Trigd, OUTPUT);
+  pinMode(EchoAb, INPUT);
+  pinMode(TrigAb, OUTPUT);
+
+  irrecv.enableIRIn(); 
+
+  //ecranini();
+}
+
+void loop() 
+{
+//IRremote detecta comandos IR
+if (irrecv.decode(&results))
+  {
+    IrcontrolMenu();
+  }
+ // Leitura dos sensores de seguimento linha
+  sensoresq = digitalRead(Se);
+  sensorcent = digitalRead(Sc);
+  sensordt = digitalRead(Sd);
+
+  //sensorColisao = digitalRead(colisaopin);
+
+// Leitura dos sensores frente,esq,drt,abismocolisao,
+//static unsigned long tempo = millis();
+
+distanciaF = ultrasonic.read(CM);
+distanciaEsq = ultrasonicE.read(CM);
+distanciaDir = ultrasonicD.read(CM);
+distanciAb=ultrasonicAb.read(CM);
+//tempo = millis();
+
+
+int dist = constrain(distanciaF, 10, 100); //limita minimo e maximo da distancia
+velocidade = map(dist,10, 100, 140, 255);//varia velocidade com o inverso da distancia
+
+analogWrite(ENA,velocidade);
+analogWrite(ENB,velocidade);
+ //digitalWrite(led_pin,LOW);
+
+//colisao, se colisao...
+if (digitalRead(colisaopin) == 1) 
+{
+  //colisao();
+}
+
+//se obstaculo chama mod0 obstaculos usando servo  senao segue
+
+if (distanciaF < 20 ) 
+  {
+    //Serial.println(distancia);
+    para();
+    delay(100);
+    retaguarda();
+    delay(400);
+    para();
+    delay(500);
+    if(modeobst==1)  obstaculoServo();
+     
+  }
+  else if (dirFrente) frente();//stop
+  else if (dirTras) retaguarda();
+  else if (dirDta) rodardireita();
+  else if (dirEsq) rodaresquerda();
+  else if (stop) para();
+
+//testa modo paredes/labirinto direita - em teste, se o percurso/sala for muito rectilíneo, funciona bem
+/*if(distanciaDir > 160)
+{
+  para();
+  delay(500);
+  velocidade=255;
+  rodardireita();
+  delay(600);//90º
+  frente();
+}*/
+
+//desvia de paredes a esq ou a drt
+if (distanciaDir < 7 ) {
+  velocidade=255;
+  //retaguarda();
+  //delay(100);
+  /*viraresquerda();
+  delay(100);
+  frente();*/
+  para();
+  rodaresquerda();
+  delay(100);
+  frente();
+}
+/*if (distanciaDir > 140 ) {
+  velocidade=255;
+  para();
+  rodardireita();
+  delay(500);
+  frente();
+}*/
+if ( distanciaEsq < 7 ) {
+  
+  velocidade=255;
+  //retaguarda();
+  //delay(100);
+  /*virardireita();
+  delay(100);
+  frente();*/
+  para();
+  rodardireita();
+  delay(100);
+  frente();
+}
+if (distanciaDir >=100 && modelabirintoDt)//seguir parede pela direita
+ {
+  rodardireita();
+  delay(400);
+  frente();
+}
+
+  //...................
+ //detecçao de precepicio, paragem e desvio consequente se activado
+ if(modeabsm)
+  {
+    distanciAb = ultrasonicAb.read(CM);
+    if (distanciAb >20) 
+    {  // Se detectar fim de mesa
+      abismo();
+    }
+  }
+  //detecçao de linha se activada
+  if(modelinha)
+  {
+    linha();
+  }
+}
+//função ultrasonica para reduzir o nro de subrotinas
+long hcsr04geral(int trig, int echo)
+{
+    digitalWrite(trig, LOW); //SETA O PINO 6 COM UM PULSO BAIXO "LOW"
+    delayMicroseconds(2); //INTERVALO DE 2 MICROSSEGUNDOS
+    digitalWrite(trig, HIGH); //SETA O PINO 6 COM PULSO ALTO "HIGH"
+    delayMicroseconds(10); //INTERVALO DE 10 MICROSSEGUNDOS
+    digitalWrite(trig, LOW); //SETA O PINO 6 COM PULSO BAIXO "LOW" NOVAMENTE
+    if(trig==12) distancia = (ultrasonic.read(CM)); //VARIÁVEL GLOBAL RECEBE O VALOR DA DISTÂNCIA MEDIDA frente
+    if(trig==A4) distancia = (ultrasonicD.read(CM)); //VARIÁVEL GLOBAL RECEBE O VALOR DA DISTÂNCIA MEDIDA direita
+    if(trig==A2) distancia = (ultrasonicE.read(CM)); //VARIÁVEL GLOBAL RECEBE O VALOR DA DISTÂNCIA MEDIDA esquerda
+    if(trig==2) distancia = (ultrasonicAb.read(CM)); //VARIÁVEL GLOBAL RECEBE O VALOR DA DISTÂNCIA MEDIDA abismo
+    delay(10); 
+    return distancia;
+
+}
+//ultrasonic utilizando o pulseIn
+/*long hcsr04geral(int trig, int echo)
+{
+    digitalWrite(trig, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trig, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trig, LOW);
+    
+    long duracao = pulseIn(echo, HIGH, 30000); // tempo em microsegundos (timeout 30ms)
+    long distancia_cm = duracao / 58; // conversão para cm
+    return distancia_cm;
+}*/
+
+
+void frente()
+{
+
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+
+    digitalWrite(MotorDrt1, HIGH);
+    digitalWrite(MotorDrt2, LOW);
+    digitalWrite(MotorEsq1, HIGH);
+    digitalWrite(MotorEsq2, LOW);
+    dirFrente=true;
+}
+void retaguarda()
+{
+    //Serial.println("marcha atrás");
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+    
+    digitalWrite(MotorDrt1, LOW);
+    digitalWrite(MotorDrt2, HIGH);
+    digitalWrite(MotorEsq1, LOW);
+    digitalWrite(MotorEsq2, HIGH);
+    dirFrente=false;
+}
+void para()
+{
+    //Serial.println("pára");
+    analogWrite(ENA,LOW);
+    analogWrite(ENB,LOW);
+    dirFrente=false;
+    stop=true;
+}
+void viraresquerda()
+  {
+    //Serial.println("virarEsquerda");
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+
+    digitalWrite(MotorDrt1, HIGH);
+    digitalWrite(MotorDrt2, LOW);
+    digitalWrite(MotorEsq1, LOW);
+    digitalWrite(MotorEsq2, LOW);
+    dirFrente=false;
+  }
+  void viraresquerdaTras()
+  {
+    //Serial.println("virarEsquerdaTra");
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+
+    digitalWrite(MotorDrt1, LOW);
+    digitalWrite(MotorDrt2, LOW);
+    digitalWrite(MotorEsq1, LOW);
+    digitalWrite(MotorEsq2, HIGH);
+    dirFrente=false;
+  }
+  void rodaresquerda()
+  {
+    //Serial.println("Rodar Esquerda");
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+
+    digitalWrite(MotorDrt1, HIGH);
+    digitalWrite(MotorDrt2, LOW);
+    digitalWrite(MotorEsq1, LOW);
+    digitalWrite(MotorEsq2, HIGH);
+    dirFrente=false;
+  }
+void virardireita()   
+{
+    //Serial.println("virarDireita");
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+
+    digitalWrite(MotorDrt1, LOW);
+    digitalWrite(MotorDrt2, LOW);
+    digitalWrite(MotorEsq1, HIGH);
+    digitalWrite(MotorEsq2, LOW);
+    dirFrente=false;
+}
+void virardireitaTras()   
+{
+    //Serial.println("virarDireitaTras");
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+
+    digitalWrite(MotorDrt1, LOW);
+    digitalWrite(MotorDrt2, HIGH);
+    digitalWrite(MotorEsq1, LOW);
+    digitalWrite(MotorEsq2, LOW);
+    dirFrente=false;
+}
+void rodardireita()   
+{
+    //Serial.println("Rodar Direita");
+    analogWrite(ENA,velocidade);
+    analogWrite(ENB,velocidade);
+
+    digitalWrite(MotorDrt1, LOW);
+    digitalWrite(MotorDrt2, HIGH);
+    digitalWrite(MotorEsq1, HIGH);
+    digitalWrite(MotorEsq2, LOW);
+    dirFrente=false;
+}
+
+
+void colisao()
+{
+  if (dirFrente) 
+  {
+    Serial.print("********************************  COLISÂO ********************************************");
+    digitalWrite(led_pin,HIGH);
+    para();
+    retaguarda();
+    delay(10000);
+
+  }
+  else
+   {
+    Serial.print("********************************  COLISÂO ********************************************");
+     digitalWrite(led_pin,HIGH);
+    para();
+    frente();
+    delay(10000);
+  }
+}
+
+void beco()
+{
+  //Serial.println("**************BECO***************");
+  para();
+  delay(100);
+  velocidade=255;
+  retaguarda();
+  delay(300);
+  if(ultrasonicD.read(CM) >= ultrasonicE.read(CM))
+    {
+      rodardireita();
+    }
+  else
+  {
+    rodaresquerda();
+  }
+  delay(1100);//180º
+  para();
+  frente();
+}
+
+void obstaculoServo()//com servo e beco sem saida-volta pra trás 1ª versao nesta rotina
+{
+  //distanciaEsq = (ultrasonicE.read(CM) + ultrasonicE.read(CM) + ultrasonicE.read(CM) / 3);
+  //distanciaDir = (ultrasonicD.read(CM) + ultrasonicD.read(CM) + ultrasonicD.read(CM) / 3);
+
+  //if(distanciaEsq > 40 || distanciaDir  > 40) 
+  if(ultrasonicE.read(CM) > 30 || ultrasonicD.read(CM)  > 30)
+  {
+    rollservo.write(180);  // Olha para a esquerda
+    delay(1000);
+
+    distanciaEsq = (ultrasonic.read(CM));// + ultrasonic.read(CM) + ultrasonic.read(CM) / 3);
+    
+    rollservo.write(0);  // Olha para a drt
+    delay(1000);
+  
+    distanciaDir = (ultrasonic.read(CM));// + ultrasonic.read(CM) + ultrasonic.read(CM) / 3);
+    
+    rollservo.write(95);  // Retorna ao centro
+    delay(1000);
+    
+    if (distanciaDir > distanciaEsq) 
+      {
+        velocidade=255;
+        //delay(200);
+        rodardireita();
+        delay(300);
+        frente();
+      }
+      else if(distanciaDir < distanciaEsq)
+      {
+        velocidade=255;
+        //delay(200);
+        rodaresquerda();
+        delay(300);
+        frente();
+      }  
+  }
+    else beco();
+}
+void linha()
+{
+   if (sensoresq == LOW && sensorcent == LOW && sensordt == LOW) 
+    {
+    // Se todos os sensores não detectarem a linha, vai em frente
+    frente();
+    } 
+    // Se o sensor do meio detectar a linha, vai em frente
+  else if (sensoresq == LOW && sensorcent == HIGH && sensordt == LOW) 
+  {
+    frente();
+    
+
+  } 
+  else if (sensoresq == HIGH && sensorcent == LOW && sensordt == LOW)
+   {
+    // Se o sensor da esquerda detectar a linha, vira à esqda
+    viraresquerda();
+  } 
+  else if (sensoresq == LOW && sensorcent == LOW && sensordt == HIGH) {
+    // Se o sensor da direita detectar a linha, vira à drta
+   virardireita();
+  }
+  else {
+    // Se todos os sensores detectarem a linha (por exemplo, quando o robô estiver em uma interseção)
+    // Pode fazer o robô parar ou realizar outra ação
+  
+   para();
+  }
+
+}
+void abismo()
+{/*
+  {  // Se detectar fim de mesa
+    para();
+    //Serial.println("abismo   ");
+    //Serial.println(distancia2);
+
+     delay(700);
+   
+    retaguarda();
+     delay(300);
+    para();
+    delay(00);
+
+    rollservo.write(175);  // Olha para a esquerda
+    delay(1000);
+
+    hcsr04geral(Trigf,Echof);//hcsr04();
+    int distanciaSvEsq = distancia;
+
+    rollservo.write(10);  // Olha para a direita
+    delay(1000);
+
+    hcsr04geral(Trigf,Echof);//hcsr04();
+    int distanciaSvDir = distancia;
+    rollservo.write(87);  // Retorna ao centro
+    //delay(700);
+
+    if (distanciaSvEsq > distanciaSvDir) {
+      rodaresquerda();
+      delay(700);
+    } else 
+    {
+      rodardireita();
+      delay(700);
+    }
+    
+  }*/
+  
+}
+//menu principal
+void IrcontrolMenu()
+{
+  float Codigo = (results.value); 
+  //contador de items
+  cont += 1 && Codigo == 551518340 && cont < 6;//baixo
+  cont -= 1 && Codigo == 551485700 && cont > 0;//cima
+
+  //menu
+  switch (cont) 
+  {
+    case 1:
+    message="1-*** Mover ***";
+    message1="";
+    IrcontrolMove();
+    delay(100);
+    break;
+
+    case 2:
+    message="2-Obstaculos";
+
+    if(!modeobst) message1="      OFF"; 
+    else message1="      ON";
+
+    if(!modeobst && Codigo == 551510144)
+    {
+      modeobst=1;
+      message1="      ON";
+      //delay(2000);
+    }
+    if(modeobst && Codigo == 551542780)
+    {
+      modeobst=0;
+      message1="      OFF";
+    }
+    delay(100);
+    break;
+
+    case 3:
+    message="3-Abismo";
+
+    if(!modeabsm) message1="      OFF"; 
+    else message1="      ON";
+
+    if(!modeabsm && Codigo == 551510144)
+    {
+      modeabsm=1;
+      message1="      ON";
+      //delay(2000);
+    }
+    if(modeabsm && Codigo == 551542780)
+    {
+      modeabsm=0;
+      message1="      OFF";
+      //delay(2000);
+    }
+    delay(100);
+    break;
+
+    case 4:
+    message="4-Linha";
+
+    if(!modelinha) message1="      OFF"; 
+    else message1="      ON";
+
+    if(!modelinha && Codigo == 551510144)
+    {
+      modelinha=1;
+      message1="      ON";
+      //delay(2000);
+    }
+    if(modelinha && Codigo == 551542780)
+    {
+      modelinha=0;
+      message1="      OFF";
+      //delay(2000);
+    }
+    delay(100);
+    break;
+
+    case 5:
+    message="5-Labirinto(drt)";
+
+    if(!modelabirintoDt) message1="      OFF"; 
+    else message1="      ON";
+
+    if(!modelabirintoDt && Codigo == 551510144)
+    {
+      modelabirintoDt=1;
+      message1="      ON";
+      //delay(2000);
+    }
+    if(modelabirintoDt && Codigo == 551542780)
+    {
+      modelabirintoDt=0;
+      message1="      OFF";
+      //delay(2000);
+    }
+    delay(100);
+    break;
+
+    case 6:
+    message="6-LER CODIGOS IR";
+    message1=Codigo;
+    delay(100);
+    break;
+
+    default:
+    break;
+  }
+  ecraMsg();
+ irrecv.resume();
+ 
+}
+void IrcontrolMove()
+{
+ float Codigo = (results.value); 
+ if (Codigo == 551486208 || Codigo == 16718055) //Frente 
+ { 
+  message1 = "     Frente";
+
+  dirFrente=1;
+  dirTras=1;
+  dirDta=0;
+  dirEsq=0;
+  stop=0;
+ } 
+ 
+ if (Codigo == 551518848 || Codigo == 16730805) //Atras 
+ { 
+  message1 = "   Retaguarda";
+  
+  dirFrente=0;
+  dirTras=1;
+  dirDta=0;
+  dirEsq=0;
+  stop=0;
+ } 
+ if (Codigo == 551510144 || Codigo == 16734885) //Direita 
+ { 
+    message1 = "     Direita";
+  
+    dirFrente=0;
+    dirTras=0; 
+    dirDta=1;
+    dirEsq=0;
+    stop=0;
+ } 
+ if (Codigo == 551542784 || Codigo == 16716015) //Esquerda 
+ { 
+   //Serial.println("esquerda");
+    message1 = "     Esquerda";
+
+    dirFrente=0;
+    dirTras=0; 
+    dirDta=0;
+    dirEsq=1;
+    stop=0;
+ } 
+ 
+ if(Codigo == 551494340 || Codigo == 16726215)
+ {
+  message1 = "      Stop";
+  
+    dirFrente=0;
+    dirTras=0; 
+    dirDta=0;
+    dirEsq=0;
+    stop=1;
+  
+ }
+  ecraMsg();
+  irrecv.resume();
+ 
+}
+
+void ecranini()
+{
+  message=("** Ola eu sou **");
+  message1=("**  0 Cocas   **");
+  ecraMsg();
+}
+
+void ecraMsg()
+{
+  lcd.clear();
+  lcd.backlight();
+
+  lcd.setCursor(0,0);
+  lcd.print(message);
+
+  lcd.setCursor(0,1);
+  lcd.print(message1);
+
+  lcd.setCursor(0,2);
+  lcd.print(message2);
+
+  lcd.setCursor(0,3);
+  lcd.print(message3);
+
+}
